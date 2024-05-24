@@ -1,0 +1,193 @@
+#define RELAY_PIN 17 // ESP32 pin GPIO17 that connects to relay
+#define AOUT_PIN 36 // ESP32 pin GPIO36 (ADC0) that connects to AOUT pin of moisture sensor
+#define TRIG_PIN 23 // ESP32 pin GPIO23 connected to Ultrasonic Sensor's TRIG pin
+#define ECHO_PIN 22 // ESP32 pin GPIO22 connected to Ultrasonic Sensor's ECHO pin
+
+#define BLYNK_TEMPLATE_ID "TMPL29MZt809o"
+#define BLYNK_TEMPLATE_NAME "Test data"
+#define BLYNK_AUTH_TOKEN "eGqSuhkt5ZFVesgTByAyveJQOzqBd8kQ"
+#define WIFI_SSID "Wissam's Galaxy"
+#define WIFI_PSD "Alhajj254"
+String URL = "http://192.168.43.192/Smartv1/pump_record.php";
+
+#define BLYNK_PRINT Serial
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <BlynkSimpleEsp32.h>
+
+
+bool relayState = LOW; // Initial relay state
+int btnState = 0;
+String state = "";
+int value;
+String mode = "";
+int button;
+String pumpState = "";
+String waterPump = "";
+float duration_us;
+
+BLYNK_WRITE(V3) {
+  btnState = param.asInt();
+  if (btnState == 1) {
+    relayState = LOW;
+  }
+}
+
+BLYNK_WRITE_DEFAULT() {
+  if (request.pin == V1) {
+    button = param.asInt();
+    if (button == 1) {
+      relayState = HIGH;
+    } else {
+      relayState = LOW;
+    }
+    digitalWrite(RELAY_PIN, relayState);
+  }
+}
+
+
+
+void setup() {
+  // put your setup code here, to run once:
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  digitalWrite(RELAY_PIN, relayState); // Set initial relay state
+  Serial.begin(9600);
+  connectWiFi();
+  Blynk.begin(BLYNK_AUTH_TOKEN, WIFI_SSID, WIFI_PSD);
+  Blynk.virtualWrite(V1, relayState); // Sync initial relay state with the server
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  Blynk.run();
+
+  value = analogRead(AOUT_PIN); // read the analog value from the sensor
+  // generate 10-microsecond pulse to TRIG pin
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  // measure duration of pulse from ECHO pin
+  duration_us = pulseIn(ECHO_PIN, HIGH);
+
+  if (duration_us > 700) {
+    relayState = LOW;
+    waterPump = "No water in the Tank ";
+  }else if (duration_us > 300) {
+    waterPump = "Tank is Half ";
+    irrigation ();
+  }else {
+    waterPump = "Tank is Full : ";
+    irrigation ();
+  }
+
+
+  Serial.println(mode);
+  Serial.print(state);
+  Serial.println(value);
+  Serial.println(pumpState);
+  Serial.println(waterPump);
+
+  digitalWrite(RELAY_PIN, relayState); // Update relay state
+
+  Blynk.virtualWrite(V0, value);
+  Blynk.virtualWrite(V2, state);
+  Blynk.virtualWrite(V4, mode);
+  Blynk.virtualWrite(V5, pumpState);
+  Blynk.virtualWrite(V6, waterPump);
+  Blynk.virtualWrite(V1, relayState); // Sync relay state with the server
+  delay(3000);
+  
+}
+
+
+
+void automaticMode() {
+  mode = "Automatic Mode";
+  if (value > 3000) {
+    state = "The soil is DRY (";
+    pumpState = "Water Pump is Working";
+    relayState = HIGH;
+    //delay(3000);
+  } else if (value > 2000) {
+    state = "The soil is MODERATE (";
+    pumpState = "Water Pump is Working";
+    relayState = HIGH; // 
+  } else {
+    state = "The soil is WET (";
+    pumpState = "Water Pump is not Working";
+    relayState = LOW;
+  }
+
+}
+
+void manualMode() {
+  mode = "Manual Mode";
+  if (value > 3000) {
+    state = "The soil is DRY (";
+  } else if (value > 2000) {
+    state = "The soil is MODERATE (";
+  } else {
+    state = "The soil is WET (";
+  }
+
+}
+
+void pumpMode() {
+  if (button == 1) {
+    pumpState = "Water Pump is Working";
+  } else {
+    pumpState = "Water Pump is not Working";
+  }
+}
+
+void connectWiFi () {
+  WiFi.mode(WIFI_OFF);
+  delay(500);
+  WiFi.mode(WIFI_STA);
+
+  WiFi.begin(WIFI_SSID, WIFI_PSD);
+  Serial.println("Connecting to Wifi");
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.print("connected to: "); Serial.println(WIFI_SSID);
+  Serial.print("IP address: "); Serial.println(WiFi.localIP());
+
+}
+
+void sendPHPdata () {
+
+  if (WiFi.status() != WL_CONNECTED ) {
+    connectWiFi();
+  }
+
+  HTTPClient http;
+  http.begin(URL);
+  int httpCode = http.GET();
+  String payload = http.getString();
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+
+  Serial.print("URL : "); Serial.println(URL);
+  Serial.print("Payload : "); Serial.println(payload);
+  Serial.print("httpCode : "); Serial.println(httpCode);
+  delay(1000);
+
+}
+
+void irrigation () {
+  if (btnState == 1 ) {
+    // Manual Mode
+    manualMode();
+    pumpMode();
+    
+  }else {
+    //Automatic Mode
+    automaticMode();
+    sendPHPdata();
+  }
+}
